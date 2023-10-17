@@ -1,0 +1,454 @@
+---
+title: "Predicting Concrete Strength using Machine Learning"
+author: "Roshan Sutihar"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+
+
+
+```
+
+```{r, include=FALSE}
+
+install.packages("tidyverse")
+install.packages("readxl")
+install.packages("randomForest")
+```
+
+```{r}
+
+library(readxl)
+library(tidyverse)
+library(caret)
+library(recipes)
+library(randomForest)
+library(glmnet)
+library(ISLR2)
+library(rpart)
+library(ipred)
+library(ranger)
+library(earth)
+library(rpart.plot)
+library(e1071)
+
+```
+
+
+## Introduction
+
+
+The dataset I am working on gives us the comprehensive strength of the concrete mixtures used mainly in the field of civil engineering. This dataset is extremely valuable for engineers and researchers in civil engineering which allows them to analyze and model the relationship between different factors involved in concrete production which ultimately determines the strength of the material. The findings of this dataset can be extremely useful for the design of extreme structures like skyscrapers.
+
+
+
+## Data
+
+```{r}
+# load your data here
+concrete_data <- read_excel("Concrete_Data.xls")
+
+```
+
+
+This dataset is extracted from https://archive.ics.uci.edu/ml/datasets/Concrete+Compressive+Strength which was made available by Prof. I-Cheng Yeh. He conducted experiments to derive a relationship between different factors such as Blast Furnace Slag, Water, Cement, etc. used in concrete productions which gives us the insight of how durable and strong our concrete will be.
+
+This data set has 1030 responses and 8 predictor variables which ultimately gives the response variable the strength.
+
+Variable Description
+
+* `Cement`: amount of cement used in the mixture.
+
+* `Blast Furnace Slag` : The amount of blast furnace slag, a byproduct of iron production, used                             in the mixture.
+
+* `Fly Ash`: The amount of fly ash, a byproduct of coal combustion, used in the mixture.
+
+* `Water` : The amount of water used in the mixture.
+
+* `Superplasticizer` : The amount of superplasticizer- chemical additive used to improve                                workability, used in the mixture.
+
+* `Coarse Aggregate`: The amount of coarse aggregate, such as crushed stone or gravel, used in                        the mixture.
+
+* `Fine Aggregate`: The amount of fine aggregate, such as sand, used in the mixture.
+
+* `Age`: The age of the concrete mixture in days at the time of testing interms of days.
+
+* `Strength`: Output Variable
+
+I have choosen to go with the `Strength` as a output variable as this gives us the best prediction of the problem that we are trying to solve. Every features in the data set ultimately contributes to the strength of the concrete which has the best practical implementation
+
+
+## Analysis/Methodology
+
+While doing the data exploration, I discovered that all the entries in the dataset exist. This dataset contains different factors affecting the strength of the concrete. Variables such as Cement, BlastFurnaceSlag, FlyAsh, Water, Superplasticizer, CoarseAggregate, FineAggregate, Age, and Strength are included in the data set.
+
+In this project, I went with a 70-30 data split, giving me the best output for my project. Giving 70% of the data to the training module can learn better patterns in the data set. The remaining 30% of the data is kept secret from the training model, allowing us to access our trained model's performance for unseen data points. This test dataset helps me to evaluate how well my training model is performing.
+
+Only a few steps were involved in the feature engineering as this was a regression dataset. There were no ZV/NZV variables and no missing entries in the dataset, so those steps were excluded from the feature engineering. The actions used in the feature engineering are step_center() and step_scale(), as the responses in the dataset had to be centered and scaled due to the difference in the range of response variables.
+
+I have used a CV with 10 folds and 5 repeats. This CV will ensure the model is trained and evaluated robustly and reliably. The repeated k-fold cross-validation approach with 10 folds and 5 repetitions helps to mitigate the potential impact of data variability and provides a more insights to the models performance and helps better prediction
+
+
+```{r}
+
+summary(concrete_data)        # provides the summary of statical properties of the variables in                                  the dataset 
+
+```
+
+```{r}
+
+glimpse(concrete_data)   # gives the overview of the content inside the datset such as variable                            names, types, some responses.
+
+```
+
+```{r}
+
+sum(is.na(concrete_data))   # checks if there are any misssing entries in the dataset
+
+```
+
+```{r}
+
+nearZeroVar(concrete_data, saveMetrics = TRUE) # checks if ther are any ZV/NZV variable in the                                                   datset
+
+```
+
+```{r}
+
+set.seed(888)
+
+# Data Splitting 
+train_index <- createDataPartition(y = concrete_data$Strength , p = 0.7, list = FALSE) # Strength is the response variable.
+
+concrete_train <- concrete_data[train_index,]   # training data
+
+concrete_test <- concrete_data[-train_index,]  # testing data
+
+```
+
+```{r}
+
+set.seed(888)
+
+# feature engineering
+
+#STEPS
+# 1) First the recipe is prepared by specifying the output/target varaible an assigning all te variables ad predictors
+# 2) step center subtracts mean all numeric predictors in the dataset which helps in reducing the bias of model
+# 3) step scale i.e. divide by standard deviation ensures all the predictors have similar magnitude
+# 4) step dummy converts all nominal (even though not present) predictors into dummy variables
+
+# then we prepare the object apply it into the test and train data
+
+
+
+concrete_recipe <- recipe(Strength ~ ., data = concrete_data)
+
+blueprint <- concrete_recipe %>%
+step_center(all_numeric(), -all_outcomes()) %>% # center (subtract mean) all numeric predictors
+step_scale(all_numeric(), -all_outcomes()) %>% # scale (divide by standard deviation) all numeric predictors
+step_dummy(all_nominal(),  one_hot = FALSE)
+
+# estimate feature engineering parameters based on training data
+prepare <- prep(blueprint, data = concrete_train)
+
+
+# apply blueprint to training data
+baked_train <- bake(prepare, new_data = concrete_train)
+
+baked_test <- bake(prepare, new_data = concrete_test)
+
+summary(baked_train)
+
+```
+
+```{r}
+set.seed(888)
+
+# CV specifications
+cv_specs <- trainControl(method = "repeatedcv",  
+                         number = 10,
+                         repeats = 5)
+```
+
+
+
+```{r}
+set.seed(888)
+
+# Simple Linear regression simple
+
+# Since the output variable is continuous data and also linear regression gives a linear relationship betwerrn predictor variables and the target variable using linear regression will be suitable for this problem.
+
+Lr_model <- train(blueprint,                  
+            data = concrete_train,
+            method = "lm",
+            trControl = cv_specs,
+            metric = "RMSE")
+
+```
+
+```{r}
+set.seed(888)
+
+# CV with KNN Simple
+
+# KNN is also a suitable model for this datset as it captures the complex relationship and adapts to different paattern and also is flexible and nonparametric model
+
+k_grid <- expand.grid(k = seq(1, 8, by = 1))
+
+knn_cv <- train(blueprint,      
+                data = concrete_train,
+                method = "knn",
+                trControl = cv_specs,
+                tuneGrid = k_grid,
+                metric = "RMSE")
+
+```
+
+```{r}
+set.seed(888)
+
+# Lasso is also a suitable regression technique for this  dataset as this model reducesa the chances of overfitting and also improves the models interpretability when dealing with alrge no.  of predictors
+
+lambda_grid <- 10^seq(-2, 2, length = 100)
+
+lasso_cv <- train(blueprint,
+                  data = concrete_train,
+                  method = "glmnet",
+                  trControl =  cv_specs,
+                  tuneGrid = expand.grid(alpha = 1, lambda = lambda_grid),
+                  metric = "RMSE")
+```
+
+```{r}
+set.seed(888)
+
+# CV with single regression tree
+
+
+#simple regresssion tree would also perform better with this dataset because of its ability to capture non-linear relation and also its very good at handling the outliers and also the missing values
+
+tree_cv <- train(blueprint,     
+    data = concrete_train,
+     method = "rpart",
+     trControl = cv_specs,
+    tuneLength = 20,
+    metric = "RMSE")
+
+```
+
+```{r}
+set.seed(888)
+
+#Bagging
+
+#bagging is also suitable for this dataset as it improves the predictive performance , reduces overfitting and also enhances the model stability. its a flexible ensemble method that can be applied to various types of models making it suitable for larger dataset
+
+bag_fit <- bagging(formula = Strength ~., 
+                   data = baked_train,
+                   nbagg = 500,
+                   coob = TRUE,
+                   control= rpart.control(minsplit = 2, 
+                                          cp = 0, 
+                                          xval = 0))
+```
+
+
+
+```{r}
+
+set.seed(888)
+
+# CV with random forests
+
+# Random forest model is also suitable for this dataset as it combines multiple decision trees to make the predictions which improves its accuracy. This model also reduces the risk of overfitting by randomly selecting the subset features to build each individual tree
+
+
+param_grid_rf <- expand.grid(mtry = seq(1, 8, 1), # for random forests
+                              splitrule = "variance", min.node.size = 2)
+
+
+
+rf_cv <- train(blueprint,
+    data = concrete_train,
+    method = "ranger",
+    trControl = cv_specs,
+    tuneGrid = param_grid_rf,
+     metric = "RMSE")
+
+
+```
+
+
+```{r}
+set.seed(888)
+
+
+#MARS (Multivariate Adaptive Regression Splines) 
+
+# MARS is also a suitable model for this dataset because of its ability to capture the nonliniar relationships and also automatically select relevant features. This model doesnt need extensicve feature engenering 
+
+param_grid_mars <- expand.grid(degree = 1:3,
+                               nprune = seq(1, 100, length.out = 10))
+
+
+
+mars_cv <- train(blueprint,
+                 data = concrete_train,
+                 method = "earth",
+                 trControl = cv_specs,
+                 tuneGrid = param_grid_mars,
+                 metric = "RMSE")
+
+
+```
+
+
+```{r}
+set.seed(888)
+
+Lr_model$results$RMSE   # Simple Linear regression Error
+
+```
+```{r}
+
+#no hyperparameters for linear model
+
+```
+
+
+```{r}
+set.seed(888)
+
+min(knn_cv$results$RMSE)   #KNN Cv Error
+
+```
+
+```{r}
+set.seed(888)
+
+knn_cv$bestTune$k
+
+```
+
+```{r}
+set.seed(888)
+
+min(tree_cv$results$RMSE)  #Tree CV Error
+```
+```{r}
+set.seed(888)
+
+tree_cv$bestTune$cp
+```
+
+```{r}
+set.seed(888)
+
+min(rf_cv$results$RMSE)  #Tree CV Error
+```
+
+```{r}
+set.seed(888)
+
+rf_cv$bestTune$mtry
+
+```
+
+
+```{r}
+set.seed(888)
+
+min(lasso_cv$results$RMSE)  #Lasso CV Error
+
+```
+
+```{r}
+set.seed(888)
+
+lasso_cv$bestTune$lambda
+
+```
+
+```{r}
+
+set.seed(888)
+
+bag_fit$err      #Bagging Model Error
+
+```
+
+```{r}
+
+#no hyperparameters for bagging
+
+```
+
+
+```{r}
+set.seed(888)
+
+min(rf_cv$results$RMSE) # Random forest model error
+
+```
+
+```{r}
+set.seed(888)
+
+min(mars_cv$results$RMSE) # Mars CV error
+
+```
+
+
+```{r}
+set.seed(888)
+
+mars_cv$bestTune
+
+```
+
+
+
+
+## Results
+
+
+| Technique     | Optimal Error | Optimal Hyperparameters |
+| ------------- | ------------- | ----------------------- |
+| Linear Regression |  10.65127| N/A | 
+| K-nearest neighbors (KNN) | 9.346073 | 3 |
+|LASSO  | 10.64672 |0.04430621|
+|Bagging (Bootstrap Aggregation)| 5.206023  |N/A | 
+| Simple Tree |8.590298 |  0.005174433 |
+|  Randon Forest| 5.319993 | 5 |
+|  MARS (Multivariate Adaptive Regression Splines)  |  6.559685 | 23 |
+
+
+
+
+```{}
+
+From the observations above I have choosen Bagging model as my final model as it has the minimum RMSE value that is  5.206023. The closest value observed to that of bagging is of random forest model with the value of 5.319993
+
+```
+
+## Final Model
+
+```{r}
+set.seed(888)
+# Final Model predictions
+
+final_model_preds <- predict(bag_fit, newdata = baked_test)
+
+sqrt(mean((final_model_preds-baked_test$Strength)^2))
+
+
+```
+
+
+## Conclusion
+
+In conclusion, this project focused on predicting the comprehensive strength of the the concrete based on various predictor variables such as Cement, BlastFurnaceSlag, FlyAsh, Water, Superplasticizer, CoarseAggregate, FineAggregate, Age using Machine learning techniques. Several machine learning models are used in this project: linear regression, K-nearest neighbors, Lasso regression, bagging, random forest, and MARS. This project highlighted the importance of proper data splitting, feature engineering and also a proper model selection for making the prediction model. Testing the error of the model it was found that Bagging was the best model with minimal error of 5.206023 and closest to it was of random forest (5.319993). Predictions were made on test data and an error of 4.10974 was received. Overall the project successfully was able to predict the Strength of the concrete with minimal error with the given dataset.
